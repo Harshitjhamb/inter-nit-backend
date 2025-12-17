@@ -84,18 +84,20 @@ app.post("/add-match", (req, res) => {
    GET POINTS TABLE
    ========================= */
 app.get("/points/:sport", (req, res) => {
+  const sport = req.params.sport.toLowerCase();
+
   db.all(
-    `SELECT team, played, won, lost, points
-     FROM points
-     WHERE sport = ?
-     ORDER BY points DESC, won DESC`,
-    [req.params.sport],
+    "SELECT * FROM points WHERE sport = ?",
+    [sport],
     (err, rows) => {
-      if (err) return res.status(500).json(err);
-      res.json(rows);
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      res.json(rows || []);
     }
   );
 });
+
 
 /* =========================
    GET TOP 4 TEAMS (SEMIFINAL)
