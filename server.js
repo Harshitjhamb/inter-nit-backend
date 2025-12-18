@@ -20,6 +20,8 @@ app.get("/", (req, res) => {
    ADD MATCH (ADMIN INPUT)
    ========================= */
 app.post("/add-match", (req, res) => {
+   console.log("ADD MATCH BODY:", req.body);
+
   const { sport, team1, team2, score1, score2, round } = req.body;
 
   /* ---------- VALIDATION ---------- */
