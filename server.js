@@ -8,7 +8,8 @@ app.use(cors());
 app.use(express.json());
 
 /* =========================
-   SERVE FRONTEND
+   OPTIONAL: SERVE FRONTEND
+   (local only – harmless on Render)
    ========================= */
 app.use(express.static(path.join(__dirname, "../frontend")));
 app.get("/", (req, res) => {
@@ -16,12 +17,12 @@ app.get("/", (req, res) => {
 });
 
 /* =========================
-   ADD MATCH (REFEREE INPUT)
+   ADD MATCH (ADMIN INPUT)
    ========================= */
 app.post("/add-match", (req, res) => {
   const { sport, team1, team2, score1, score2, round } = req.body;
 
-  /* Validation */
+  /* ---------- VALIDATION ---------- */
   if (!sport || !team1 || !team2 || score1 == null || score2 == null) {
     return res.status(400).json({ error: "Invalid match data" });
   }
@@ -33,21 +34,21 @@ app.post("/add-match", (req, res) => {
   const winner =
     score1 > score2 ? team1 :
     score2 > score1 ? team2 :
-    null; // draw case
+    null;
 
   const loser =
     winner === team1 ? team2 :
     winner === team2 ? team1 :
     null;
 
-  /* Save match */
+  /* ---------- SAVE MATCH ---------- */
   db.run(
     `INSERT INTO matches (sport, team1, team2, score1, score2, round)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [sport, team1, team2, score1, score2, round]
+    [sport, team1, team2, score1, score2, round || "league"]
   );
 
-  /* Ensure teams exist (UNIQUE by team + sport) */
+  /* ---------- ENSURE POINTS ROW EXISTS ---------- */
   [team1, team2].forEach(team => {
     db.run(
       `INSERT OR IGNORE INTO points (team, sport, played, won, lost, points)
@@ -56,14 +57,14 @@ app.post("/add-match", (req, res) => {
     );
   });
 
-  /* Update standings */
+  /* ---------- UPDATE STANDINGS ---------- */
   if (winner && loser) {
     db.run(
       `UPDATE points
        SET played = played + 1,
-           won = won + (team = ?),
-           lost = lost + (team = ?),
-           points = points + (team = ?)*2
+           won    = won    + (team = ?),
+           lost   = lost   + (team = ?),
+           points = points + (team = ?) * 2
        WHERE team IN (?, ?) AND sport = ?`,
       [winner, loser, winner, team1, team2, sport]
     );
@@ -77,17 +78,27 @@ app.post("/add-match", (req, res) => {
     );
   }
 
-  res.json({ message: "Match recorded successfully" });
+  /* ---------- DEBUG LOG (SAFE) ---------- */
+  db.all(
+    `SELECT team, sport, played, won, lost, points FROM points WHERE sport = ?`,
+    [sport],
+    (_, rows) => console.log("POINTS TABLE:", rows)
+  );
+
+  res.json({ success: true });
 });
 
 /* =========================
-   GET POINTS TABLE
+   GET POINTS TABLE (MAIN SCREEN)
    ========================= */
 app.get("/points/:sport", (req, res) => {
-  const sport = req.params.sport.toLowerCase();
+  const sport = req.params.sport;
 
   db.all(
-    "SELECT * FROM points WHERE sport = ?",
+    `SELECT team, sport, played, won, lost, points
+     FROM points
+     WHERE sport = ?
+     ORDER BY points DESC, won DESC, lost ASC`,
     [sport],
     (err, rows) => {
       if (err) {
@@ -98,9 +109,8 @@ app.get("/points/:sport", (req, res) => {
   );
 });
 
-
 /* =========================
-   GET TOP 4 TEAMS (SEMIFINAL)
+   QUALIFIERS (OPTIONAL)
    ========================= */
 app.get("/qualifiers/:sport", (req, res) => {
   db.all(
@@ -112,7 +122,7 @@ app.get("/qualifiers/:sport", (req, res) => {
     [req.params.sport],
     (err, rows) => {
       if (err) return res.status(500).json(err);
-      res.json(rows);
+      res.json(rows || []);
     }
   );
 });
@@ -122,6 +132,5 @@ app.get("/qualifiers/:sport", (req, res) => {
    ========================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("✅ Server running on port", PORT);
 });
-
