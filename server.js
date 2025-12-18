@@ -8,8 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 /* =========================
-   OPTIONAL: SERVE FRONTEND
-   (local only – harmless on Render)
+   LOCAL FRONTEND SERVING
    ========================= */
 app.use(express.static(path.join(__dirname, "../frontend")));
 app.get("/", (req, res) => {
@@ -17,11 +16,9 @@ app.get("/", (req, res) => {
 });
 
 /* =========================
-   ADD MATCH (ADMIN INPUT)
+   ADD MATCH (ADMIN PANEL)
    ========================= */
 app.post("/add-match", (req, res) => {
-   console.log("ADD MATCH BODY:", req.body);
-
   const { sport, team1, team2, score1, score2, round } = req.body;
 
   /* ---------- VALIDATION ---------- */
@@ -43,55 +40,68 @@ app.post("/add-match", (req, res) => {
     winner === team2 ? team1 :
     null;
 
-  /* ---------- SAVE MATCH ---------- */
-  db.run(
-    `INSERT INTO matches (sport, team1, team2, score1, score2, round)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [sport, team1, team2, score1, score2, round || "league"]
-  );
+  /* =========================
+     SERIALIZED DB OPERATIONS
+     (THIS FIXES YOUR BUG)
+     ========================= */
+  db.serialize(() => {
 
-  /* ---------- ENSURE POINTS ROW EXISTS ---------- */
-  [team1, team2].forEach(team => {
+    /* ---------- SAVE MATCH ---------- */
+    db.run(
+      `INSERT INTO matches (sport, team1, team2, score1, score2, round)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [sport, team1, team2, score1, score2, round || "league"]
+    );
+
+    /* ---------- ENSURE BOTH TEAMS EXIST ---------- */
     db.run(
       `INSERT OR IGNORE INTO points (team, sport, played, won, lost, points)
        VALUES (?, ?, 0, 0, 0, 0)`,
-      [team, sport]
+      [team1, sport]
+    );
+
+    db.run(
+      `INSERT OR IGNORE INTO points (team, sport, played, won, lost, points)
+       VALUES (?, ?, 0, 0, 0, 0)`,
+      [team2, sport]
+    );
+
+    /* ---------- UPDATE BOTH TEAMS TOGETHER ---------- */
+    if (winner && loser) {
+      db.run(
+        `UPDATE points
+         SET played = played + 1,
+             won    = won    + (team = ?),
+             lost   = lost   + (team = ?),
+             points = points + (team = ?) * 2
+         WHERE team IN (?, ?) AND sport = ?`,
+        [winner, loser, winner, team1, team2, sport]
+      );
+    } else {
+      /* Draw */
+      db.run(
+        `UPDATE points
+         SET played = played + 1
+         WHERE team IN (?, ?) AND sport = ?`,
+        [team1, team2, sport]
+      );
+    }
+
+    /* ---------- DEBUG LOG ---------- */
+    db.all(
+      `SELECT team, played, won, lost, points
+       FROM points
+       WHERE sport = ?`,
+      [sport],
+      (_, rows) => console.log("POINTS TABLE:", rows)
     );
   });
-
-  /* ---------- UPDATE STANDINGS ---------- */
-  if (winner && loser) {
-    db.run(
-      `UPDATE points
-       SET played = played + 1,
-           won    = won    + (team = ?),
-           lost   = lost   + (team = ?),
-           points = points + (team = ?) * 2
-       WHERE team IN (?, ?) AND sport = ?`,
-      [winner, loser, winner, team1, team2, sport]
-    );
-  } else {
-    /* Draw */
-    db.run(
-      `UPDATE points
-       SET played = played + 1
-       WHERE team IN (?, ?) AND sport = ?`,
-      [team1, team2, sport]
-    );
-  }
-
-  /* ---------- DEBUG LOG (SAFE) ---------- */
-  db.all(
-    `SELECT team, sport, played, won, lost, points FROM points WHERE sport = ?`,
-    [sport],
-    (_, rows) => console.log("POINTS TABLE:", rows)
-  );
 
   res.json({ success: true });
 });
 
 /* =========================
-   GET POINTS TABLE (MAIN SCREEN)
+   GET POINTS TABLE
    ========================= */
 app.get("/points/:sport", (req, res) => {
   const sport = req.params.sport;
